@@ -8,8 +8,8 @@ sizes always shown, and every figure linked to its Legistar source.
 import collections, datetime as dt, html, json, os, re, shutil, sqlite3
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, "data", "council.sqlite")
-OUT = os.path.join(ROOT, "site")
+DB = os.environ.get("COUNCIL_DB") or os.path.join(ROOT, "data", "council.sqlite")
+OUT = os.environ.get("SITE_OUT") or os.path.join(ROOT, "site")
 COUNCIL = 138
 CORRECTIONS_EMAIL = "spencer.adam1@gmail.com"
 APPROVING = ("ADOPTED", "ADOPTED AS AMENDED", "APPROVED", "CONFIRMED", "GRANTED")
@@ -21,7 +21,8 @@ e = lambda s: html.escape(str(s if s is not None else ""), quote=True)
 def money(v):
     if v is None:
         return ""
-    return f"${v:,.0f}" if abs(v - round(v)) < 0.005 else f"${v:,.2f}"
+    sign, v = ("-" if v < 0 else ""), abs(v)
+    return sign + (f"${v:,.0f}" if abs(v - round(v)) < 0.005 else f"${v:,.2f}")
 
 
 def nice_date(d, year=True):
@@ -68,12 +69,15 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 .controls{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;align-items:center}
 .note{background:var(--soft);border-radius:8px;padding:10px 14px;font-size:.93rem}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;padding:16px 0 30px}
-summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain{padding-left:1.1em}ul.plain li{margin:.3em 0}
+summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain,ol.plain{padding-left:1.1em}ol.plain li{margin:.3em 0}ul.plain li{margin:.3em 0}
 .cmp td,.cmp th{padding:4px 6px;font-size:.85rem;text-align:center}.cmp td:first-child,.cmp th:first-child{text-align:left;min-width:260px}
 """
 
-NAV = [("index.html", "Home"), ("meetings.html", "Meetings"), ("money.html", "Money"), ("payments.html", "Who gets paid"),
-       ("members.html", "Council & Mayor"), ("compare.html", "Compare votes"), ("about.html", "About")]
+NAV = [("index.html", "Home"), ("upcoming.html", "This week"), ("meetings.html", "Meetings"), ("money.html", "Money"),
+       ("budget.html", "Budget"), ("payments.html", "Who gets paid"), ("members.html", "Council & Mayor"),
+       ("compare.html", "Compare votes"), ("guide.html", "How city hall works"), ("about.html", "About")]
+# Links to other years' copies of the site, e.g. SITE_YEAR_LINKS="2025=2025/index.html"
+YEAR_LINKS = [x.split("=", 1) for x in os.environ.get("SITE_YEAR_LINKS", "").split(",") if "=" in x]
 
 
 class Site:
@@ -84,6 +88,7 @@ class Site:
         self.year = self.meta["year"]
         self.updated = self.meta["last_updated"]
         self.today = dt.date.today().isoformat()
+        self.archive = self.year != self.today[:4]      # a past year: no "this month" or upcoming sections
         self.items = {r["id"]: r for r in self.q("SELECT * FROM items")}
         self.meetings = {r["id"]: r for r in self.q("SELECT * FROM meetings")}
         self.people = self.q("SELECT * FROM people ORDER BY role DESC, CAST(district AS INTEGER)")
@@ -122,10 +127,11 @@ class Site:
         depth = path.count("/")
         root = "../" * depth
         nav = "".join(f'<a href="{root}{h}"{" aria-current=page" if h == current else ""}>{t}</a>' for h, t in NAV)
+        years = "".join(f'<a href="{root}{h}">{e(y)} records</a>' for y, h in YEAR_LINKS)
         doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(title)} | La Crosse Council Tracker</title><link rel="stylesheet" href="{root}style.css"></head><body>
-<header class="site"><div class="wrap"><a class="brand" href="{root}index.html">La Crosse Council Tracker</a><nav>{nav}</nav></div></header>
+<header class="site"><div class="wrap"><a class="brand" href="{root}index.html">La Crosse Council Tracker <span class="tag">{e(self.year)}</span></a><nav>{nav}{years}</nav></div></header>
 <main><div class="wrap">{body}</div></main>
 <footer><div class="wrap">Data from the City of La Crosse's public <a href="{e(self.meta['source'])}">Legistar records</a>.
 Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts and dollars only; this site does not grade officials.
@@ -189,7 +195,7 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
         with open(os.path.join(OUT, "style.css"), "w") as f:
             f.write(CSS)
         self.home(); self.meetings_pages(); self.item_pages(); self.money_page()
-        self.payments_page()
+        self.payments_page(); self.upcoming_page(); self.budget_page(); self.guide_page()
         self.member_pages(); self.compare_page(); self.about_page()
 
     def council_meetings(self):
@@ -227,6 +233,13 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
             b.append(f"<h2>What happened at the most recent meeting ({nice_date(latest['date'])})</h2><ul class='plain'>"
                      + "".join(f"<li>{x}</li>" for x in bullets[:5]) +
                      f"</ul><p><a href='meeting/{latest['id']}.html'>See every item from this meeting</a></p>")
+        if self.archive:
+            b.append(f"<p class='note'>This is the {e(self.year)} archive. Use the menu to browse that year's meetings, votes, money and payments.</p>"
+                     f"<h2>All {e(self.year)} Common Council meetings</h2>" + self.meeting_table(cm))
+            return self.page("index.html", "Home", "".join(b), "index.html")
+        b.append("<div class='grid'><a class='stat' href='upcoming.html' style='text-decoration:none;color:inherit'><b>This week</b><span>What the council is about to decide, and how to weigh in</span></a>"
+                 "<a class='stat' href='members.html#find' style='text-decoration:none;color:inherit'><b>Find my council member</b><span>Pick your district to see who represents you</span></a>"
+                 "<a class='stat' href='guide.html' style='text-decoration:none;color:inherit'><b>How city hall works</b><span>Who decides what, and what the terms mean</span></a></div>")
         month_items = [self.items[i] for i, a in self.approved.items()
                        if a["date"][:7] == ym and self.items[i]["amount"] is not None and not self.items[i]["amends_prior"]]
         b.append(f"<h2>Money approved in {month_name(ym)}</h2>")
@@ -414,8 +427,10 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
 
     def payments_page(self):
         SMALL = 1000
-        pay = self.q("SELECT * FROM payments")
         checks = self.q("SELECT * FROM packet_checks")
+        # A document whose lines do not add up to its printed total is left out entirely.
+        bad = {(c["item_id"], c["kind"]): c["source_url"] for c in checks if not c["ok"]}
+        pay = [r for r in self.q("SELECT * FROM payments") if (r["item_id"], "payments") not in bad]
         months = sorted({r["bills_month"] for r in pay})
         src = {}
         for r in pay:
@@ -434,7 +449,9 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
                   d=sorted(([dn, round(x, 2)] for dn, x in v["d"].items()), key=lambda z: -z[1])[:6])
              for k, v in sorted(big.items(), key=lambda kv: -kv[1]["t"])]
         pc = collections.defaultdict(lambda: [0.0, 0])
-        for r in self.q("SELECT merchant, amount FROM pcard"):
+        for r in self.q("SELECT merchant, amount, item_id FROM pcard"):
+            if (r["item_id"], "pcard") in bad:
+                continue
             pc[r["merchant"]][0] += r["amount"]; pc[r["merchant"]][1] += 1
         pc_total = sum(x[0] for x in pc.values())
         PC = [[k, round(x[0], 2), x[1]] for k, x in sorted(pc.items(), key=lambda kv: -kv[1][0]) if x[0] >= SMALL]
@@ -455,6 +472,9 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
              "(shown as US Bank). Each month's list covers payments made the month before the council vote. Payee names are cut off at 30 letters in the city's "
              f"document. Payees who received less than {money(SMALL)} in total are counted but not named, since many are refunds to residents; they are in the source documents. "
              f"Accuracy check: for {n_ok} of {len(checks)} documents, the lines read here add up exactly to the total printed in the document.</p>",
+             ("<p class='note'><b>Left out.</b> " + " ".join(
+                 f"The {e(k[1])} list in <a href='{self.item_href(self.items[k[0]])}'>{e(self.items[k[0]]['name'])}</a> could not be read reliably "
+                 f"(the lines did not add up to the printed total), so it is not included. <a href='{e(u)}'>Source (PDF)</a>." for k, u in bad.items()) + "</p>" if bad else ""),
              "<h2>Monthly totals</h2><div class='scroll'><table><tr><th>Approved by council</th><th class=n>Total paid</th><th>Council item</th><th>Source document</th></tr>"]
         for mi in months:
             t = sum(r["amount"] for r in pay if r["bills_month"] == mi)
@@ -492,6 +512,122 @@ $('vt').innerHTML=h;$('more').hidden=rows.length<=lim}
 $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener('click',()=>{lim+=200;draw()});draw();</script>""")
         self.page("payments.html", "Who gets paid", "".join(b), "payments.html", script)
 
+    def upcoming_page(self):
+        ups = sorted((m for m in self.meetings.values() if m["date"] >= self.today), key=lambda m: (m["date"], m["id"]))
+        b = ["<h1>This week at city hall</h1><p class='lede'>What is on the agenda at upcoming meetings, before the vote happens.</p>"]
+        if not ups:
+            b.append("<p>No upcoming meetings are posted in the records this site collects. <a href='meetings.html'>See past meetings</a>.</p>")
+        else:
+            b.append("<p class='note'><b>How to weigh in.</b> Contact your council member before the meeting (<a href='members.html#find'>find yours</a>). "
+                     "Meetings are open to the public. The agenda linked under each meeting is the city's official notice. Check it, or ask the City Clerk's office, for how to attend or comment. "
+                     "Agendas can change up to the meeting, so check the city's page for the latest version.</p>")
+        for m in ups:
+            acts = [a for a in self.by_meeting[m["id"]]]
+            links = [f"<a href='{e(m['source_url'])}'>City's meeting page</a>"] + ([f"<a href='{e(m['agenda_url'])}'>Agenda (PDF)</a>"] if m["agenda_url"] else [])
+            b.append(f"<h2>{e(m['body'])}: {nice_date(m['date'])}, {e(m['time'])}</h2><p class='meta'>{e(m['comment'] + ' · ') if m['comment'] else ''}"
+                     f"{e((m['location'] or '').replace(chr(13), '').replace(chr(10), ', '))} · {' · '.join(links)}</p>")
+            if not acts:
+                b.append("<p class='muted'>No agenda items are posted yet.</p>")
+            for a in acts:
+                it = self.items[a["item_id"]]
+                prior = [x for x in self.by_item[it["id"]] if x["action"] and x["date"] and x["date"] < m["date"]]
+                hist = "".join(f"<li>{nice_date(x['date'])}, {e(x['body'])}: {e(self.outcome(x))}</li>" for x in prior[-4:])
+                b.append(f"<div class='card'><h3><a href='{self.item_href(it)}'>{e(it['name'] or it['file_number'])}</a></h3>"
+                         + (f"<p><span class='tag'>City staff summary</span>{e(it['staff_summary'])}</p>" if it["staff_summary"] else "")
+                         + f"<p class='official'>Official title: {e(it['title'])}</p>"
+                         + (f"<p><b>Cost, in staff's words:</b> {e(it['fiscal_impact'])}</p>" if it["fiscal_impact"] else
+                            (f"<p><span class='amt'>{money(it['amount'])}</span> <span class='tag'>from title</span></p>" if it["amount"] is not None else ""))
+                         + (f"<p class='small'><b>So far:</b></p><ul class='plain small'>{hist}</ul>" if hist else "<p class='small muted'>No earlier committee action is recorded.</p>")
+                         + f"<p class='meta'><span class='tag'>{e(it['file_number'])}</span><a href='{e(it['source_url'])}'>Source: Legistar file</a></p></div>")
+        self.page("upcoming.html", "This week", "".join(b), "upcoming.html")
+
+    def budget_page(self):
+        has = self.q("SELECT name FROM sqlite_master WHERE name='budget_docs'")
+        docs = self.q("SELECT * FROM budget_docs ORDER BY budget_year DESC, kind") if has else []
+        b = ["<h1>Budget</h1><p class='lede'>The city's operating budget by department, copied from the city's own budget document.</p>"]
+        if not docs:
+            b.append(f"<p>No operating budget summary was found in the {e(self.year)} records.</p>")
+        for d in docs:
+            it = self.items[d["item_id"]]
+            cols = d["columns"].split("|")
+            lines = self.q("SELECT * FROM budget_lines WHERE budget_year=? AND kind=? ORDER BY seq", d["budget_year"], d["kind"])
+            appr = self.approved.get(it["id"])
+            status = (f"The council adopted this item on {nice_date(appr['date'])}." if appr else
+                      "These are proposed figures. The council has not adopted this budget in the records collected so far, and the numbers can still change.")
+            title = "What the city plans to spend" if d["kind"] == "expense" else "Where the money comes from"
+            b.append(f"<h2>{d['budget_year']} operating budget: {title}</h2><p class='note'>{status} "
+                     f"Source: <a href='{e(d['source_url'])}'>{e(d['doc_name'])}</a> (PDF), from council item <a href='{self.item_href(it)}'>{e(it['file_number'])}</a>. "
+                     + ("Accuracy check: the department rows read here add up to the total printed in the document. " if d["ok"] else
+                        "Accuracy check failed: the rows read here do not add up to the printed total, so compare with the source before relying on them. ")
+                     + ("This table covers the general operating budget. Utilities, the airport and other funds paid by user fees have their own budgets in the same document."
+                        if d["kind"] == "expense" else "The tax levy is the amount collected from property taxes for this budget.") + "</p>")
+            last = len(cols) - 1
+            top = max((abs(l["v5"]) for l in lines if not l["is_total"]), default=1) or 1
+            b.append("<div class='scroll'><table><tr><th>" + ("Department" if d["kind"] == "expense" else "Source") + "</th>"
+                     + "".join(f"<th class=n>{e(c)}</th>" for c in cols) + f"<th class=n>Change from {d['budget_year'] - 1}</th><th class=n>% change</th></tr>")
+            for l in lines:
+                if l["label"].lower().startswith("total revenue sources"):
+                    continue
+                v = [l["v1"], l["v2"], l["v3"], l["v4"], l["v5"]]
+                pc = f"{100 * l['change'] / l['v4']:+.1f}%" if l["v4"] else "n/a"
+                lab = f"<b>{e(l['label'])}</b>" if l["is_total"] else e(l["label"].title())
+                bar = "" if l["is_total"] else f"<span class='fill' style='display:block;height:5px;background:var(--bar);border-radius:2px;width:{max(100 * abs(l['v5']) / top, 1):.0f}%'></span>"
+                b.append(f"<tr><td>{lab}{bar}</td>" + "".join(f"<td class=n>{money(x)}</td>" for x in v)
+                         + f"<td class=n>{'+' if l['change'] > 0 else ''}{money(l['change']) if l['change'] else '$0'}</td><td class=n>{pc}</td></tr>")
+            b.append("</table></div>")
+        if docs:
+            b.append("<p class='small muted'>Dollar amounts are as printed, rounded to whole dollars by the city. “Actual” columns are what was spent or received in past years; "
+                     "“original budget” is what was first approved for that year. This site does not adjust for inflation.</p>")
+        self.page("budget.html", "Budget", "".join(b), "budget.html")
+
+    def guide_page(self):
+        n = len([p for p in self.people if p["role"] != "Mayor"])
+        bodies = collections.Counter(a["body"] for a in self.actions if a["action"])
+        top = "".join(f"<li>{e(k)}: {v} recorded actions on {e(self.year)} council items</li>" for k, v in bodies.most_common(7))
+        terms = [
+            ("Common Council", f"The city's elected legislature: {n} members, each elected from one district. It passes ordinances and resolutions, approves the budget, and approves contracts and borrowing."),
+            ("Mayor", "Elected by the whole city. The Mayor's office introduces much of the legislation, often on behalf of city departments, and makes appointments that the council confirms."),
+            ("Committee", "A smaller group that studies an item first and votes on a recommendation. Most items go to a committee before the full council. A recommendation is advice; the council makes the decision."),
+            ("Resolution", "A formal decision of the council, such as approving a contract, a grant or a policy."),
+            ("Ordinance", "A change to the city's laws (the municipal code)."),
+            ("Charter ordinance", "A change to how city government itself is organized. The city's records show these need a two-thirds vote."),
+            ("Agenda", "The list of items for a meeting, published beforehand."),
+            ("Minutes", "The official record of what happened at a meeting. Results on this site can change until minutes are final."),
+            ("Roll call or recorded vote", "A vote where each member's yes or no is written down. Only these appear in member vote counts."),
+            ("Voice vote and consent agenda", "Routine items are often passed together or by voice, with no individual votes recorded. A member can ask for an item to be voted on separately."),
+            ("Adopted, approved, confirmed", "The item passed."),
+            ("Received and filed", "The council accepted a report or document for the record. No further action follows from it."),
+            ("Referred", "Sent to a committee or back to one for more work. Not a yes or a no."),
+            ("Amended", "Changed before the final vote. A vote on an amendment is separate from the vote on the item."),
+            ("Moved and seconded", "One member proposes a motion and another supports bringing it to a vote. Moving an item is procedural and does not always mean the member supports it."),
+            ("Abstain", "A member chooses not to vote, often to avoid a conflict of interest."),
+            ("Excused", "The member was absent with notice. It is not a vote."),
+            ("Staff report", "A short document from city staff explaining an item, including its fiscal impact (cost)."),
+            ("Bills and estimates", "The monthly list of payments the city made, which the council approves. The Who gets paid page is built from these lists."),
+            ("Report of bids", "The result of competitive bidding on a contract, with a recommendation on who should be awarded it."),
+            ("Operating budget", "The yearly plan for running city services: police, fire, streets, parks, library and so on."),
+            ("Capital budget", "The plan for long-lasting purchases such as streets, buildings and equipment, often paid for by borrowing."),
+            ("Tax levy", "The total amount the city collects in property taxes for the year."),
+            ("TIF or TID (tax incremental district)", "An area where growth in property tax revenue is set aside for a period to pay for development costs in that area."),
+            ("Bonds and promissory notes", "Ways the city borrows money. A “not to exceed” amount is a ceiling, not necessarily what is borrowed."),
+            ("Legistar", "The city's public system for agendas, minutes, votes and documents. Every link marked “Source” on this site goes there."),
+        ]
+        b = ["<h1>How city hall works</h1><p class='lede'>A short guide to who decides what in La Crosse city government, and what the words on this site mean.</p>",
+             "<h2>How an item becomes a decision</h2><ol class='plain'>"
+             "<li><b>It is introduced.</b> A council member, the Mayor or a city department files an item. It gets a file number such as 26-0950.</li>"
+             "<li><b>A committee or board reviews it.</b> The committee hears from staff and the public and votes on a recommendation.</li>"
+             "<li><b>The Common Council votes.</b> The council can adopt it, amend it, send it back, or reject it.</li>"
+             "<li><b>It is recorded.</b> The result goes into the minutes, and the documents stay on the city's Legistar site.</li></ol>"
+             "<p class='small muted'>Each item's page on this site shows these steps in order under “What happened, step by step”.</p>",
+             f"<h2>Who took action on {e(self.year)} items</h2><ul class='plain'>{top}</ul>"
+             "<p class='small muted'>Counted from the city's records for items that reached the Common Council or the Finance & Personnel Committee.</p>",
+             "<h2>How to take part</h2><ul class='plain'><li><a href='upcoming.html'>See what is coming up</a> before it is voted on.</li>"
+             "<li><a href='members.html#find'>Find your council member</a> and contact them.</li>"
+             "<li>Attend a meeting or read the agenda. Each meeting page links to the city's agenda.</li></ul>",
+             "<h2>What the words mean</h2><dl>" + "".join(f"<dt><b>{e(t)}</b></dt><dd style='margin:0 0 .7em'>{e(d)}</dd>" for t, d in terms) + "</dl>",
+             "<p class='small muted'>These are general explanations written for this site, not legal definitions. The city's code and the City Clerk are the authority on procedure.</p>"]
+        self.page("guide.html", "How city hall works", "".join(b), "guide.html")
+
     def member_stats(self, p):
         pid = p["id"]
         cast = [(a, v["vote"]) for a in self.rollcalls for v in self.votes[a["history_id"]] if v["person_id"] == pid]
@@ -521,12 +657,18 @@ $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener
                      f"<span class='small muted'>{s['with_major']} of {s['decided']}</span></td><td class=n>{len(s['moved'])}</td><td class=n>{len(s['seconded'])}</td></tr>")
         body = (f"<h1>Council members and Mayor</h1><p class='lede'>The same counts for every member, in district order, from "
                 f"{len(self.rollcalls)} recorded Common Council votes in {e(self.year)}.</p>"
+                + ("" if self.archive else "<div class='card' id='find'><h3>Find my council member</h3><p>Each member represents one of 13 districts. Pick yours: "
+                "<select id='dsel' aria-label='District'><option value=''>Choose a district</option>"
+                + "".join(f"<option value='member/{p['id']}.html'>District {e(p['district'])}: {e(p['name'])}</option>" for p in members)
+                + "</select></p><p class='small muted'>Not sure which district you live in? The state's MyVote Wisconsin site (myvote.wi.gov) "
+                "looks up your districts by address. The Mayor is elected by the whole city.</p></div>"
+                "<script>document.getElementById('dsel').addEventListener('change',e=>{if(e.target.value)location.href=e.target.value})</script>") +
                 "<p class='note'>Most council items pass by voice or consent vote with no individual votes recorded, so these counts cover only "
                 "the items that had a recorded vote. “Excused” is not a vote and is left out of yes and no counts. “With the larger side” means the member "
                 "voted the way most members did on that vote; it says nothing about whether a vote was right.</p>"
                 "<div class='scroll'><table><tr><th>Member</th><th class=n>Meetings present</th><th class=n>Recorded votes</th><th class=n>Yes</th><th class=n>No</th>"
                 "<th class=n>Abstain</th><th class=n>Excused</th><th class=n>With the larger side</th><th class=n>Moved</th><th class=n>Seconded</th></tr>"
-                + rows + "</table></div><h2>Mayor</h2>"
+                + rows + "</table></div><h2>Mayor</h2>" + ("<p class='small muted'>Members and mayors whose terms ended or began during the year are all listed, so some districts appear twice.</p>" if self.archive else "")
                 + "".join(f"<p><a href='member/{p['id']}.html'>{e(p['name'])}</a>. The Mayor does not cast a vote on most council items, "
                           f"so the Mayor's page shows items sponsored, appointments and vetoes instead.</p>" for p in mayors))
         self.page("members.html", "Council members and Mayor", body, "members.html")
@@ -546,7 +688,8 @@ $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener
             c = s["counts"]
             role = "Mayor" if p["role"] == "Mayor" else f"Council Member, District {p['district']}"
             b = [f"<p class='small'><a href='../members.html'>← All members</a></p><h1>{e(p['name'])}</h1>"
-                 f"<p class='meta'>{e(role)} · Current term {nice_date(p['term_start'])} to {nice_date(p['term_end']) if p['term_end'] else 'present'}</p>"]
+                 f"<p class='meta'>{e(role)} · Current term {nice_date(p['term_start'])} to {nice_date(p['term_end']) if p['term_end'] else 'present'}"
+                 + (f" · City email: <a href='mailto:{e(p['email'])}'>{e(p['email'])}</a>" if p["email"] else "") + "</p>"]
             if p["role"] != "Mayor":
                 other = s["rollcalls"] - c["Yes"] - c["No"] - c["Abstain"] - c["Excused"]
                 b.append("<div class='grid'>"
@@ -637,11 +780,12 @@ It covers {e(self.year)} meetings of the {e(' and '.join(json.loads(self.meta['b
 <h2>What is missing</h2>
 <ul class="plain">
 <li><b>Most items have no individual votes.</b> Of {len(cc_acts)} Common Council actions, {len(self.rollcalls)} have a member-by-member vote. The rest passed by voice or consent vote, and the city records no individual votes for those.</li>
-<li><b>Most items do not state a dollar amount.</b> Only {n_amt} of {n_items} items state a dollar figure in their title. Those are marked “from title” and are the only figures added into Money totals, so those totals are a floor. Where the city's staff report states a fiscal impact, that text is shown word for word on the item. The annual budget book is not read yet.</li>
+<li><b>Most items do not state a dollar amount.</b> Only {n_amt} of {n_items} items state a dollar figure in their title. Those are marked “from title” and are the only figures added into Money totals, so those totals are a floor. Where the city's staff report states a fiscal impact, that text is shown word for word on the item. </li>
+<li><b>The Budget page</b> copies the department summary tables from the city's budget document and checks that the rows add up to the printed totals. It covers the general operating budget, not every fund.</li>
 <li><b>Payments come from the city's monthly bill lists.</b> The “Who gets paid” page is read by computer from PDF documents. Each document's lines are added up and checked against the total printed in it. Payee names are cut off at 30 letters in the source, and payees under $1,000 in total are not named.</li>
 <li><b>Minutes lag.</b> Recent meetings can show an agenda before results are posted. Those are marked “results pending”, and results can change until minutes are final.</li>
 <li><b>Summaries are the city's own.</b> Where a staff report exists, its “Summary/Purpose” text is shown and labeled as city staff's words. This site does not write its own summaries yet.</li>
-<li><b>Other years and boards</b> (Board of Estimates, Board of Public Works) are not included yet, though committee steps appear in each item's history.</li>
+<li><b>Other boards</b> (Board of Estimates, Board of Public Works) do not have their own meeting pages yet, though their steps appear in each item's history. Each year is a separate copy of the site, linked in the menu.</li>
 </ul>
 <h2>How the numbers are counted</h2>
 <ul class="plain">

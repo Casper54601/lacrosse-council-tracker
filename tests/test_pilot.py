@@ -144,3 +144,28 @@ class PacketData(unittest.TestCase):
         self.assertGreater(n, 0)
         bad = db.execute("SELECT kind, stated_total, parsed_total, source_url FROM packet_checks WHERE ok=0").fetchall()
         self.assertEqual(bad, [])
+
+
+import budget  # noqa: E402
+
+
+class BudgetParsing(unittest.TestCase):
+    PAGE = """PROPOSED OPERATING BUDGET FOR
+FOR THE YEAR 2027
+DEPARTMENTS                      Actual           Actual               Actual     Original Budget        Proposed          Inc/(Dec)
+LEGAL                               642,080          747,736              865,215         886,437            885,117             (1,320)
+LA CROSSE CENTER                  3,661,957        4,415,889                  -               -                  -                    -
+Total Operating Expenses     $    4,304,037   $    5,163,625       $      865,215   $     886,437   $       885,117   $        (1,320)
+"""
+
+    def test_summary_page(self):
+        year, cols, rows, ok = budget.parse_page(self.PAGE, "Total Operating Expenses")
+        self.assertEqual(year, 2027)
+        self.assertTrue(ok)
+        self.assertEqual(rows[0], ("LEGAL", 0, [642080.0, 747736.0, 865215.0, 886437.0, 885117.0, -1320.0]))
+        self.assertEqual(rows[1][2][2:], [0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(rows[2][1], 1)
+
+    def test_wrong_total_is_caught(self):
+        bad = self.PAGE.replace("885,117   $        (1,320)", "999,999   $        (1,320)")
+        self.assertFalse(budget.parse_page(bad, "Total Operating Expenses")[3])

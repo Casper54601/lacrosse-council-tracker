@@ -33,6 +33,13 @@ Steps on their own:
   "Bills and Estimates" PDFs into `payments` (department, vendor, amount), `pcard`
   (purchasing-card purchases) and `estimates` (contract progress payments). Every
   parsed document is added up and compared with its printed total in `packet_checks`.
+- **Budget reader** (`collector/budget.py`). Reads the operating budget and revenue
+  summary tables from the budget document attached to the year's Budget item, and
+  checks that the rows add up to the printed totals.
+- **Two years.** `run.sh` builds the current year at `site/` and the previous year as
+  an archive at `site/<year>/`, each from its own database (`COUNCIL_DB`, `SITE_OUT`).
+  A bills document that does not add up to its printed total is left off the payments
+  page and named there.
 - **Database** (`data/council.sqlite`). Tables: `meetings`, `items`, `actions`,
   `votes`, `attendance`, `people`, `sponsors`, `documents`, `meta`. Actions are keyed
   on Legistar's history row ID, so two motions on one item in one night stay separate.
@@ -42,8 +49,8 @@ Steps on their own:
 
 ## Not built yet
 
-1. The annual budget book. Staff-report fiscal impact text is shown but its figures
-   are not added into totals, because they mix costs, revenues and property values.
+1. Budget detail below the department level, and the capital budget. Staff-report
+   fiscal impact text is shown but its figures are not added into totals.
 2. Site-written plain-English summaries (the city staff summary is shown where a
    staff report exists). The `items` table has `plain_summary`, `summary_model`
    and `summary_prompt_version` columns, and the site shows a summary next to the
