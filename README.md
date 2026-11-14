@@ -43,4 +43,3 @@ Steps on their own:
 3. 2025 data and meetings of the Board of Estimates and Board of Public Works
    (`--year 2025`, `--bodies 138 139 195 186` already work in the collector; the site
    builds one year at a time).
-4. A real corrections address. Set `CORRECTIONS_EMAIL` in `site_builder/build.py`.

@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "council.sqlite")
 OUT = os.path.join(ROOT, "site")
 COUNCIL = 138
-CORRECTIONS_EMAIL = "corrections@example.org"   # TODO: set the real corrections contact
+CORRECTIONS_EMAIL = "spencer.adam1@gmail.com"
 APPROVING = ("ADOPTED", "ADOPTED AS AMENDED", "APPROVED", "CONFIRMED", "GRANTED")
 NO_ROLL = "Voice or consent vote, no individual votes recorded"
 
