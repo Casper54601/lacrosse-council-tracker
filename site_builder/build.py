@@ -5,7 +5,7 @@ Reads data/council.sqlite and writes plain HTML into site/. Standard library onl
 Fairness rules: counts and dollars only, the same layout for every member, sample
 sizes always shown, and every figure linked to its Legistar source.
 """
-import collections, datetime as dt, html, json, os, shutil, sqlite3
+import collections, datetime as dt, html, json, os, re, shutil, sqlite3
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "council.sqlite")
@@ -68,11 +68,11 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 .controls{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;align-items:center}
 .note{background:var(--soft);border-radius:8px;padding:10px 14px;font-size:.93rem}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;padding:16px 0 30px}
-ul.plain{padding-left:1.1em}ul.plain li{margin:.3em 0}
+summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain{padding-left:1.1em}ul.plain li{margin:.3em 0}
 .cmp td,.cmp th{padding:4px 6px;font-size:.85rem;text-align:center}.cmp td:first-child,.cmp th:first-child{text-align:left;min-width:260px}
 """
 
-NAV = [("index.html", "Home"), ("meetings.html", "Meetings"), ("money.html", "Money"),
+NAV = [("index.html", "Home"), ("meetings.html", "Meetings"), ("money.html", "Money"), ("payments.html", "Who gets paid"),
        ("members.html", "Council & Mayor"), ("compare.html", "Compare votes"), ("about.html", "About")]
 
 
@@ -156,6 +156,8 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
             if m and m["minutes_status"] != "Final":
                 return "Results pending (minutes not posted yet)"
             return "No action recorded"
+        if a["has_roll_call"] and not (a["yes"] or a["no"]):
+            return f"{act}. A vote was taken, but Legistar does not record how each member voted"
         if a["has_roll_call"]:
             verb = "Motion failed" if a["result"] == "Fail" else "Motion passed"
             return f"{act}: {verb.lower()}, {self.tally(a)}" if a["result"] != "Fail" else f"Motion for “{act}” failed, {self.tally(a)}"
@@ -168,6 +170,9 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
         amt = (f'<span class="amt">{money(it["amount"])}</span> <span class="tag">{e(it["amount_source"])}</span>'
                if it["amount"] is not None else '<span class="muted small">No dollar amount in the title</span>')
         summary = f'<p>{e(it["plain_summary"])}</p>' if it["plain_summary"] else ""
+        if it["staff_summary"] and len(it["staff_summary"]) > 15:
+            st = it["staff_summary"]
+            summary += (f'<p><span class="tag">City staff summary</span>{e(st[:320])}{"…" if len(st) > 320 else ""}</p>')
         when = f'{nice_date(a["date"])} · {e(a["body"])} · ' if show_date else ""
         return f"""<div class="card item" data-search="{e((it['file_number'] + ' ' + (it['name'] or '') + ' ' + it['title']).lower())}">
 <h3><a href="{self.item_href(it, root)}">{e(it['name'] or it['file_number'])}</a></h3>{summary}
@@ -184,6 +189,7 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
         with open(os.path.join(OUT, "style.css"), "w") as f:
             f.write(CSS)
         self.home(); self.meetings_pages(); self.item_pages(); self.money_page()
+        self.payments_page()
         self.member_pages(); self.compare_page(); self.about_page()
 
     def council_meetings(self):
@@ -332,7 +338,15 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
                          + (f" <span class='small muted'>The title names {len(amts)} dollar figures: {', '.join(money(x) for x in amts)}. The largest is shown.</span>" if len(amts) > 1 else "")
                          + (" <span class='small muted'>This item amends an earlier resolution, so it is left out of money totals to avoid counting the same dollars twice.</span>" if it["amends_prior"] else "") + "</p>")
             else:
-                b.append("<p class='muted small'>No dollar amount appears in the title. Check the attached documents for cost detail.</p>")
+                b.append("<p class='muted small'>No dollar amount appears in the title."
+                         + (" See the fiscal impact from the staff report below." if it["fiscal_impact"] else " Check the attached documents for cost detail.") + "</p>")
+            if it["staff_report_url"]:
+                b.append("<h3>What city staff told the council</h3>"
+                         + (f"<p><b>Summary and purpose:</b> {e(it['staff_summary'])}</p>" if it["staff_summary"] else "")
+                         + (f"<p><b>Fiscal impact:</b> {e(it['fiscal_impact'])}</p>" if it["fiscal_impact"] else
+                            "<p class='muted small'>The staff report's Fiscal Impact section is blank.</p>")
+                         + f"<p class='meta'>Copied word for word from the <a href='{e(it['staff_report_url'])}'>staff report (PDF)</a>. "
+                           "Written by city staff, not by this site.</p>")
             sp = self.sponsors[it["id"]]
             if sp:
                 b.append(f"<p class='meta'>Sponsored by: {e(', '.join(s['person'] for s in sp))}</p>")
@@ -360,7 +374,8 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
         b = [f"<h1>Money</h1><p class='lede'>Dollar amounts the Common Council approved in {e(self.year)}, by month and by kind of item.</p>",
              f"<p class='note'><b>Read this first.</b> Of {len(rows)} items the council approved, only {len(counted)} state a dollar amount in their "
              "title. Those are the only dollars shown here, each marked “from title”. The rest of the spending detail is in agenda packets and the budget "
-             "book, which this site does not read yet. Treat every figure as a floor, not a total. Categories are not added together, because borrowing pays "
+             "book. Staff-report cost statements are listed <a href='#fiscal'>at the bottom of this page</a>, and actual payments are on the "
+             "<a href='payments.html'>Who gets paid</a> page. Treat every figure here as a floor, not a total. Categories are not added together, because borrowing pays "
              "for later contracts and adding them would count the same dollars twice. Borrowing figures are “not to exceed” limits.</p>"]
         order = ["Contracts and purchases", "Borrowing", "TIF districts", "Grants", "Budget", "Other"]
         detail = []
@@ -385,8 +400,97 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
                                   f"<td class=n>{money(it['amount'])}</td><td class='small'>{e(self.outcome(a))}</td>"
                                   f"<td><a href='{e(it['source_url'])}'>{e(it['file_number'])}</a></td></tr>"
                                   for it, a in sorted(months[ym], key=lambda x: -x[0]["amount"])) + "</table></div>")
+        fis = sorted(((a["date"], it, a) for _, it, a in rows if it["fiscal_impact"] and "$" in it["fiscal_impact"]
+                      and it["amount"] is None), key=lambda x: x[0], reverse=True)
         b.append("<h2>The items behind each bar</h2>" + "".join(detail))
+        b.append(f"<h2 id='fiscal'>Approved items where the cost is only in the staff report ({len(fis)})</h2>"
+                 "<p class='small muted'>These items have no dollar amount in their title, but the city's staff report states a fiscal impact. "
+                 "The text is copied word for word. The figures are not added into the totals above, because they mix costs, revenues, "
+                 "borrowing and property values.</p><div class='scroll'><table><tr><th>Approved</th><th>Item</th><th>Fiscal impact, in staff's words</th><th>Source</th></tr>"
+                 + "".join(f"<tr><td>{nice_date(d)}</td><td><a href='{self.item_href(it)}'>{e(it['name'])}</a><br><span class='small muted'>{e(it['category'])}</span></td>"
+                           f"<td class='small'>{e(it['fiscal_impact'][:420])}{'…' if len(it['fiscal_impact']) > 420 else ''}</td>"
+                           f"<td><a href='{e(it['staff_report_url'])}'>Staff report</a></td></tr>" for d, it, a in fis) + "</table></div>")
         self.page("money.html", "Money", "".join(b), "money.html")
+
+    def payments_page(self):
+        SMALL = 1000
+        pay = self.q("SELECT * FROM payments")
+        checks = self.q("SELECT * FROM packet_checks")
+        months = sorted({r["bills_month"] for r in pay})
+        src = {}
+        for r in pay:
+            src[r["bills_month"]] = (r["source_url"], self.items[r["item_id"]]["file_number"])
+        vend = collections.defaultdict(lambda: {"t": 0.0, "n": 0, "m": collections.defaultdict(float), "d": collections.defaultdict(float)})
+        dept = collections.defaultdict(float)
+        for r in pay:
+            v = vend[r["vendor"]]
+            v["t"] += r["amount"]; v["n"] += 1
+            v["m"][r["bills_month"]] += r["amount"]; v["d"][r["department"]] += r["amount"]
+            dept[r["department"]] += r["amount"]
+        total = sum(v["t"] for v in vend.values())
+        big = {k: v for k, v in vend.items() if v["t"] >= SMALL}
+        small = {k: v for k, v in vend.items() if v["t"] < SMALL}
+        V = [dict(v=k, t=round(v["t"], 2), n=v["n"], m={mi: round(x, 2) for mi, x in sorted(v["m"].items())},
+                  d=sorted(([dn, round(x, 2)] for dn, x in v["d"].items()), key=lambda z: -z[1])[:6])
+             for k, v in sorted(big.items(), key=lambda kv: -kv[1]["t"])]
+        pc = collections.defaultdict(lambda: [0.0, 0])
+        for r in self.q("SELECT merchant, amount FROM pcard"):
+            pc[r["merchant"]][0] += r["amount"]; pc[r["merchant"]][1] += 1
+        pc_total = sum(x[0] for x in pc.values())
+        PC = [[k, round(x[0], 2), x[1]] for k, x in sorted(pc.items(), key=lambda kv: -kv[1][0]) if x[0] >= SMALL]
+        est = self.q("SELECT * FROM estimates ORDER BY bills_month")
+        jobs = {}
+        for r in est:
+            j = jobs.setdefault(r["job"], dict(c=r["contractor"], n="", job=r["job"], paid=0.0, amt=0.0, cont=0.0, k=0))
+            j["c"] = re.sub(r"\s*\((PARTIAL )?FINAL\)", "", r["contractor"]); j["n"] = r["contract_name"] or j["n"]
+            j["paid"] += r["estimate"]; j["amt"] = r["contract_amount"]; j["cont"] = r["contingency"]; j["k"] += 1
+        n_ok = sum(1 for c in checks if c["ok"])
+        b = ["<h1>Who gets paid</h1><p class='lede'>Every payment the city listed in the monthly “bills and estimates” the Common Council "
+             f"approved in {e(self.year)}: who was paid, how much, and from which department.</p>",
+             f"<div class='grid'><div class='stat'><b>{money(total)}</b><span>paid out across {len(months)} monthly bill lists</span></div>"
+             f"<div class='stat'><b>{len(vend):,}</b><span>different payees</span></div>"
+             f"<div class='stat'><b>{len(pay):,}</b><span>payment lines read from the city's documents</span></div></div>",
+             "<p class='note'><b>Read this first.</b> This is money going out, not only spending on city services. It includes taxes the city collects and passes on "
+             "to the school district, county and technical college, payroll taxes and employee benefits, debt payments, and the city's purchasing-card bill "
+             "(shown as US Bank). Each month's list covers payments made the month before the council vote. Payee names are cut off at 30 letters in the city's "
+             f"document. Payees who received less than {money(SMALL)} in total are counted but not named, since many are refunds to residents; they are in the source documents. "
+             f"Accuracy check: for {n_ok} of {len(checks)} documents, the lines read here add up exactly to the total printed in the document.</p>",
+             "<h2>Monthly totals</h2><div class='scroll'><table><tr><th>Approved by council</th><th class=n>Total paid</th><th>Council item</th><th>Source document</th></tr>"]
+        for mi in months:
+            t = sum(r["amount"] for r in pay if r["bills_month"] == mi)
+            b.append(f"<tr><td>{month_name(mi)}</td><td class=n>{money(t)}</td><td><a href='item/{src[mi][1]}.html'>{src[mi][1]}</a></td>"
+                     f"<td><a href='{e(src[mi][0])}'>Bill detail (PDF)</a></td></tr>")
+        b.append("</table></div><h2>Payees</h2><div class='controls'><input id='vq' type='search' size='36' placeholder='Search payees, e.g. excavating' aria-label='Search payees'>"
+                 "<span id='vn' class='muted small'></span></div><p class='small muted'>Select a payee to see its payments by month and department. "
+                 f"{len(small):,} payees under {money(SMALL)} each, {money(sum(v['t'] for v in small.values()))} in total, are not listed by name.</p>"
+                 "<div class='scroll'><table id='vt'></table></div><p><button id='more' type='button'>Show more</button></p>")
+        b.append("<h2>By department or fund</h2><p class='small muted'>The department or fund each payment was charged to, as labeled by the city.</p>"
+                 "<details><summary>Show all " + str(len(dept)) + " departments and funds</summary><div class='scroll'><table><tr><th>Department or fund</th><th class=n>Total paid</th></tr>"
+                 + "".join(f"<tr><td>{e(k)}</td><td class=n>{money(v)}</td></tr>" for k, v in sorted(dept.items(), key=lambda kv: -kv[1])) + "</table></div></details>")
+        b.append(f"<h2>Purchasing-card purchases</h2><p class='small muted'>City staff also buy with purchasing cards. The card bill is already inside the totals above "
+                 f"(paid to US Bank), so this is a breakdown of that bill, not extra spending: {money(pc_total)} across {len(pc):,} merchants. Merchant names are as they appear on card statements. "
+                 f"Merchants under {money(SMALL)} in total are not listed.</p><details><summary>Show {len(PC)} merchants</summary><div class='scroll'><table><tr><th>Merchant</th>"
+                 "<th class=n>Total</th><th class=n>Purchases</th></tr>" + "".join(f"<tr><td>{e(k)}</td><td class=n>{money(t)}</td><td class=n>{n}</td></tr>" for k, t, n in PC) + "</table></div></details>")
+        b.append(f"<h2>Construction and design contracts in progress</h2><p class='small muted'>From the monthly estimates sheets: {len(jobs)} contracts that received a progress payment in "
+                 f"{e(self.year)}. “Paid this year” adds up only the payments listed in {e(self.year)} sheets, so contracts that started earlier have been paid more than shown.</p>"
+                 "<div class='scroll'><table><tr><th>Contractor</th><th>Contract</th><th class=n>Contract amount</th><th class=n>Contingency</th><th class=n>Paid this year</th><th class=n>Payments</th></tr>"
+                 + "".join(f"<tr><td>{e(j['c'])}</td><td>{e(j['n'] or 'Name not readable in the document')}<br><span class='small muted'>Job {e(j['job'])}</span></td><td class=n>{money(j['amt'])}</td>"
+                           f"<td class=n>{money(j['cont']) if j['cont'] else '<span class=muted>none</span>'}</td><td class=n>{money(j['paid'])}</td><td class=n>{j['k']}</td></tr>"
+                           for j in sorted(jobs.values(), key=lambda j: -j["amt"])) + "</table></div>")
+        script = ("<script>const V=" + json.dumps(V).replace("</", "<\\/") + ";const SRC=" + json.dumps({m: src[m][0] for m in months}) + """;
+const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const $=i=>document.getElementById(i),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const usd=x=>(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+let lim=50;
+function draw(){const t=$('vq').value.trim().toLowerCase();const rows=V.filter(v=>!t||v.v.toLowerCase().includes(t));
+$('vn').textContent=rows.length.toLocaleString()+' payee'+(rows.length==1?'':'s');
+let h='<tr><th>Payee</th><th class=n>Total paid</th><th class=n>Payment lines</th></tr>';
+rows.slice(0,lim).forEach(v=>{h+='<tr><td><details><summary>'+esc(v.v)+'</summary><p class="small"><b>By month approved:</b> '+
+Object.entries(v.m).map(([m,x])=>'<a href="'+esc(SRC[m])+'">'+MN[+m.slice(5)-1]+'</a> '+usd(x)).join(' · ')+'</p><p class="small"><b>Charged to:</b> '+
+v.d.map(d=>esc(d[0])+' '+usd(d[1])).join(' · ')+'</p></details></td><td class=n>'+usd(v.t)+'</td><td class=n>'+v.n+'</td></tr>'});
+$('vt').innerHTML=h;$('more').hidden=rows.length<=lim}
+$('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener('click',()=>{lim+=200;draw()});draw();</script>""")
+        self.page("payments.html", "Who gets paid", "".join(b), "payments.html", script)
 
     def member_stats(self, p):
         pid = p["id"]
@@ -533,9 +637,10 @@ It covers {e(self.year)} meetings of the {e(' and '.join(json.loads(self.meta['b
 <h2>What is missing</h2>
 <ul class="plain">
 <li><b>Most items have no individual votes.</b> Of {len(cc_acts)} Common Council actions, {len(self.rollcalls)} have a member-by-member vote. The rest passed by voice or consent vote, and the city records no individual votes for those.</li>
-<li><b>Most dollar amounts are not shown.</b> Only {n_amt} of {n_items} items state a dollar figure in their title. Those are marked “from title”. Spending detail in agenda packets and the budget book is not read yet, so money totals are a floor.</li>
+<li><b>Most items do not state a dollar amount.</b> Only {n_amt} of {n_items} items state a dollar figure in their title. Those are marked “from title” and are the only figures added into Money totals, so those totals are a floor. Where the city's staff report states a fiscal impact, that text is shown word for word on the item. The annual budget book is not read yet.</li>
+<li><b>Payments come from the city's monthly bill lists.</b> The “Who gets paid” page is read by computer from PDF documents. Each document's lines are added up and checked against the total printed in it. Payee names are cut off at 30 letters in the source, and payees under $1,000 in total are not named.</li>
 <li><b>Minutes lag.</b> Recent meetings can show an agenda before results are posted. Those are marked “results pending”, and results can change until minutes are final.</li>
-<li><b>Plain-English summaries</b> are not added yet. When they are, each will sit next to the official title and source link, never in place of them.</li>
+<li><b>Summaries are the city's own.</b> Where a staff report exists, its “Summary/Purpose” text is shown and labeled as city staff's words. This site does not write its own summaries yet.</li>
 <li><b>Other years and boards</b> (Board of Estimates, Board of Public Works) are not included yet, though committee steps appear in each item's history.</li>
 </ul>
 <h2>How the numbers are counted</h2>

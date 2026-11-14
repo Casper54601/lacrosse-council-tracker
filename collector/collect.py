@@ -127,7 +127,8 @@ CREATE TABLE meetings (
 CREATE TABLE items (
   id INTEGER PRIMARY KEY, file_number TEXT, name TEXT, title TEXT, type TEXT,
   status TEXT, category TEXT, amount REAL, amount_source TEXT, amounts_json TEXT,
-  amends_prior INTEGER, plain_summary TEXT, summary_model TEXT, summary_prompt_version TEXT, source_url TEXT);
+  amends_prior INTEGER, plain_summary TEXT, summary_model TEXT, summary_prompt_version TEXT, source_url TEXT,
+  staff_summary TEXT, fiscal_impact TEXT, staff_report_url TEXT);
 CREATE TABLE actions (               -- one row per Legistar history row (EventItemId)
   history_id INTEGER PRIMARY KEY, item_id INTEGER REFERENCES items(id),
   meeting_id INTEGER, body_id INTEGER, body TEXT, date TEXT,
@@ -269,7 +270,7 @@ def collect(year, bodies, refresh_days):
         it = m["it"]
         title = it["EventItemTitle"] or it["EventItemMatterName"] or ""
         amts = find_amounts(title) or find_amounts(it["EventItemMatterName"])
-        db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+        db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)", (
             mid, it["EventItemMatterFile"], it["EventItemMatterName"], title,
             it["EventItemMatterType"], it["EventItemMatterStatus"],
             categorize(title + " " + (it["EventItemMatterName"] or ""), it["EventItemMatterType"]),

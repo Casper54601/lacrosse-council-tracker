@@ -6,7 +6,8 @@ on the city's Legistar site.
 
 ## Run it
 
-Needs Python 3.9 or newer. No packages to install.
+Needs Python 3.9 or newer and the `pdftotext` program (package `poppler-utils`;
+on a Mac, `brew install poppler`). No Python packages to install.
 
     ./run.sh                 # collect, test, build
     python3 -m http.server -d site 8000    # then open http://localhost:8000
@@ -14,6 +15,7 @@ Needs Python 3.9 or newer. No packages to install.
 Steps on their own:
 
     python3 collector/collect.py --year 2026    # writes data/council.sqlite
+    python3 collector/packets.py                # reads staff reports and bill lists (PDFs)
     python3 -m unittest discover tests          # pilot facts as tests
     python3 site_builder/build.py               # writes site/
 
@@ -26,6 +28,11 @@ Steps on their own:
   calls, item histories, sponsors and office records, four requests at a time. Every
   raw response is cached in `data/cache/`. Meetings older than `--refresh-days` with
   final minutes are read from the cache; newer ones are refetched.
+- **Packet reader** (`collector/packets.py`). Downloads staff report PDFs and stores
+  their "Summary/Purpose" and "Fiscal Impact" text word for word. Reads the monthly
+  "Bills and Estimates" PDFs into `payments` (department, vendor, amount), `pcard`
+  (purchasing-card purchases) and `estimates` (contract progress payments). Every
+  parsed document is added up and compared with its printed total in `packet_checks`.
 - **Database** (`data/council.sqlite`). Tables: `meetings`, `items`, `actions`,
   `votes`, `attendance`, `people`, `sponsors`, `documents`, `meta`. Actions are keyed
   on Legistar's history row ID, so two motions on one item in one night stay separate.
@@ -35,9 +42,10 @@ Steps on their own:
 
 ## Not built yet
 
-1. Dollar amounts from agenda packets and the budget book (PDF extraction). Today
-   only amounts stated in item titles are shown, labeled "from title".
-2. Plain-English summaries. The `items` table has `plain_summary`, `summary_model`
+1. The annual budget book. Staff-report fiscal impact text is shown but its figures
+   are not added into totals, because they mix costs, revenues and property values.
+2. Site-written plain-English summaries (the city staff summary is shown where a
+   staff report exists). The `items` table has `plain_summary`, `summary_model`
    and `summary_prompt_version` columns, and the site shows a summary next to the
    official title whenever one is present.
 3. 2025 data and meetings of the Board of Estimates and Board of Public Works
