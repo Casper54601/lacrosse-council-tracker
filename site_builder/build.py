@@ -5,18 +5,11 @@ Reads data/council.sqlite and writes plain HTML into site/. Standard library onl
 Fairness rules: counts and dollars only, the same layout for every member, sample
 sizes always shown, and every figure linked to its Legistar source.
 """
-import collections, datetime as dt, html, json, os, re, shutil, sqlite3, sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import review_flags  # noqa: E402
+import collections, datetime as dt, html, json, os, re, shutil, sqlite3
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "council.sqlite")
 OUT = os.path.join(ROOT, "site")
-RESPONSES = os.path.join(ROOT, "flag_responses.json")   # optional: replies posted next to a flag
-# Rules whose results are held back from the site, with the reason shown on the flags page.
-PAUSED_RULES = {"contract-overrun": "Results are not shown yet. The estimates sheets sometimes print one payment on two months' sheets, "
-                "and a line marked FINAL may restate earlier payments. Until the city confirms how to read them, adding the lines up could overstate what was paid."}
 COUNCIL = 138
 CORRECTIONS_EMAIL = "spencer.adam1@gmail.com"
 APPROVING = ("ADOPTED", "ADOPTED AS AMENDED", "APPROVED", "CONFIRMED", "GRANTED")
@@ -77,11 +70,10 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;padding:16px 0 30px}
 summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain{padding-left:1.1em}ul.plain li{margin:.3em 0}
 .cmp td,.cmp th{padding:4px 6px;font-size:.85rem;text-align:center}.cmp td:first-child,.cmp th:first-child{text-align:left;min-width:260px}
-.flag{border-left:4px solid var(--accent)}.flag h3{font-size:1rem}.flag ul{margin:.3em 0}.rule dt{font-weight:600;margin-top:.5em}.rule dd{margin:0 0 .2em}
 """
 
 NAV = [("index.html", "Home"), ("meetings.html", "Meetings"), ("money.html", "Money"), ("payments.html", "Who gets paid"),
-       ("members.html", "Council & Mayor"), ("compare.html", "Compare votes"), ("flags.html", "Review flags"), ("about.html", "About")]
+       ("members.html", "Council & Mayor"), ("compare.html", "Compare votes"), ("about.html", "About")]
 
 
 class Site:
@@ -136,7 +128,7 @@ class Site:
 <header class="site"><div class="wrap"><a class="brand" href="{root}index.html">La Crosse Council Tracker</a><nav>{nav}</nav></div></header>
 <main><div class="wrap">{body}</div></main>
 <footer><div class="wrap">Data from the City of La Crosse's public <a href="{e(self.meta['source'])}">Legistar records</a>.
-Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts, dollars and published record checks; this site does not grade officials.
+Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts and dollars only; this site does not grade officials.
 <a href="{root}about.html">How this works and how to report an error</a>.</div></footer>{script}</body></html>"""
         full = os.path.join(OUT, path)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -196,13 +188,9 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts, d
         os.makedirs(OUT)
         with open(os.path.join(OUT, "style.css"), "w") as f:
             f.write(CSS)
-        self.rf = review_flags.compute(self)
-        self.rf["flags"] = [f for f in self.rf["flags"] if f.rule not in PAUSED_RULES]
-        self.flags_by_item = self.rf["by_item"]
-        self.responses = review_flags.load_responses(RESPONSES)
         self.home(); self.meetings_pages(); self.item_pages(); self.money_page()
         self.payments_page()
-        self.member_pages(); self.compare_page(); self.flags_page(); self.about_page()
+        self.member_pages(); self.compare_page(); self.about_page()
 
     def council_meetings(self):
         return sorted((m for m in self.meetings.values() if m["body_id"] == COUNCIL), key=lambda m: m["date"])
@@ -249,12 +237,6 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts, d
                      "<a href='money.html'>See the Money page</a>.</p>")
         else:
             b.append("<p>No approved items this month state a dollar amount in their title so far. <a href='money.html'>See the Money page</a>.</p>")
-        nf = len(self.rf["flags"])
-        b.append("<h2>Records flagged for review</h2><p>"
-                 + (f"<b>{nf}</b> public record{'s' if nf != 1 else ''} meet{'' if nf != 1 else 's'} at least one of the site's published record checks, "
-                    "for example a contract paid past its approved amount, or a large item passed with no recorded vote. "
-                    if nf else "No records meet any of the site's published record checks right now. ")
-                 + "A flag is a place to look, not a finding. <a href='flags.html'>See the flags and how each test works</a>.</p>")
         b.append(f"<h2>Meetings in {month_name(ym)}</h2>" + self.meeting_table(sorted(this_month, key=lambda m: m["date"])))
         upcoming = [m for m in cm if m["date"] >= self.today]
         b.append("<h2>Upcoming votes</h2>")
@@ -348,8 +330,6 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
             if it["plain_summary"]:
                 b.append(f"<p class='lede'>{e(it['plain_summary'])}</p><p class='small muted'>Plain-English summary generated by "
                          f"{e(it['summary_model'])} (prompt {e(it['summary_prompt_version'])}). The official text below is the record.</p>")
-            if self.flags_by_item.get(it["id"]):
-                b.append(self.flag_box(self.flags_by_item[it["id"]], "../"))
             b.append(f"<div class='card'><p class='official'><b>Official title:</b> {e(it['title'])}</p>"
                      f"<p><span class='tag'>File {e(it['file_number'])}</span><span class='tag'>{e(it['type'])}</span>"
                      f"<span class='tag'>{e(it['category'])}</span><span class='tag'>Status: {e(it['status'])}</span></p>")
@@ -605,137 +585,7 @@ $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener
                          f"<p>No veto actions appear in the Legistar records collected for {e(self.year)}.</p>"))
                 b.append(f"<h2>Appointments ({len(appts)})</h2>" + (item_list(appts) if appts else "<p>None recorded.</p>"))
                 b.append(f"<h2>Items sponsored ({len(s['sponsored'])})</h2>" + (item_list(s["sponsored"]) if s["sponsored"] else "<p>None recorded.</p>"))
-            b.append(self.member_flag_section(p, s))
             self.page(f"member/{p['id']}.html", p["name"], "".join(b), "members.html")
-
-    # ------------------------------------------------------------ review flags
-    def flag_box(self, fl, root=""):
-        return ("<div class='note'><b>Flagged for review.</b> This record meets "
-                f"{len(fl)} of the site's <a href='{root}flags.html'>published record checks</a>. A flag is a place to look, not a finding. "
-                "It does not say anyone did anything wrong.<ul class='plain'>"
-                + "".join(f"<li><a href='{root}flags.html#{f.anchor}'>{e(f.headline)}</a></li>" for f in fl) + "</ul></div>")
-
-    def flag_card(self, f):
-        links = [f"<a href='{e(u)}'>{e(l)}</a>" for l, u in f.links]
-        if f.item_id in self.items:
-            links.insert(0, f"<a href='item/{e(self.items[f.item_id]['file_number'])}.html'>Item page</a>")
-        resp = self.responses.get(f.key)
-        resp_html = ""
-        if resp:
-            who = e(resp.get("from") or "Response")
-            when = f" ({e(resp['date'])})" if resp.get("date") else ""
-            resp_html = f"<div class='note'><b>Response from {who}{when}, posted word for word:</b> {e(resp['text'])}</div>"
-        return (f"<div class='card flag' id='{f.anchor}'><h3>{e(f.headline)}</h3><ul class='plain'>"
-                + "".join(f"<li>{e(x)}</li>" for x in f.facts) + f"</ul><p class='meta'>{' · '.join(links)}</p>{resp_html}"
-                f"<p class='small muted'>Flag ID: {e(f.key)}</p></div>")
-
-    def member_flag_section(self, p, s):
-        rows = review_flags.member_involvement(self.rf, p["id"])
-        is_mayor = p["role"] == "Mayor"
-
-        def distinct(role):
-            return len({f.item_id for f, roles, _ in rows if role in roles})
-        stats = [("sponsor", "sponsored", len(s["sponsored"]), "items sponsored")]
-        if not is_mayor:
-            stats += [("mover", "moved", len({a["item_id"] for a in s["moved"]}), "items with a motion moved"),
-                      ("seconder", "seconded", len({a["item_id"] for a in s["seconded"]}), "items with a motion seconded")]
-        grid = "".join(f"<div class='stat'><b>{distinct(role)} of {total}</b><span>{label} that were flagged for review</span></div>"
-                       for role, _, total, label in stats)
-        abst = sum(1 for _, roles, _ in rows if "abstained" in roles)
-        out = ["<h2>Flagged items this person is recorded on</h2>",
-               "<p class='note'>The public record names this person on the items below as sponsor, mover or seconder, or as an abstaining member. "
-               "Those are routine roles. A sponsor often introduces an item for a city department, and the flag is about the record, not the person. "
-               "The same table and the same checks appear for every member and the Mayor. See the <a href='../flags.html'>flag rules</a>.</p>",
-               f"<div class='grid'>{grid}<div class='stat'><b>{abst}</b><span>recorded abstentions</span></div></div>"]
-        if rows:
-            out.append("<div class='scroll'><table><tr><th>Flag</th><th>Role in the record</th><th>How this person voted</th></tr>" + "".join(
-                f"<tr><td><a href='../flags.html#{f.anchor}'>{e(f.headline)}</a></td><td>{e(', '.join(roles))}</td>"
-                f"<td class='small'>{e('; '.join(votes)) if votes else '<span class=muted>no recorded vote by member</span>'}</td></tr>"
-                for f, roles, votes in rows) + "</table></div>")
-        else:
-            out.append("<p>No flagged items name this person in these roles.</p>")
-        return "".join(out)
-
-    def flags_page(self):
-        rf, cfg = self.rf, self.rf["config"]
-        by_rule = collections.defaultdict(list)
-        for f in rf["flags"]:
-            by_rule[f.rule].append(f)
-        b = ["<h1>Review flags</h1><p class='lede'>Public records that meet a published test of the kind auditors use to decide where to look first. "
-             "Each test runs the same way on every record, every night. Tests that find nothing are listed too.</p>",
-             "<p class='note'><b>Read this first.</b> A flag is not a finding. It does not say that anyone broke a rule, acted in bad faith or made a mistake. "
-             "Every test below has ordinary explanations, and they are printed beside it. Flags are about records, such as a contract or a payment line, "
-             "not about anyone's character. The thresholds were chosen by this site and are not city rules. The city's own record is the authority, "
-             "and anyone named can send a response that will be posted word for word next to the flag (see the end of this page).</p>",
-             "<div class='grid'>" + "".join(
-                 f"<a class='stat' href='#r-{r['id']}' style='text-decoration:none;color:inherit'><b>{'Paused' if r['id'] in PAUSED_RULES else len(by_rule[r['id']])}</b><span>{e(r['short'])}</span></a>"
-                 for r in rf["rules"]) + "</div>"]
-        for r in rf["rules"]:
-            fl = by_rule[r["id"]]
-            b.append(f"<h2 id='r-{r['id']}'>{e(r['title'])}</h2>" + ("" if r["id"] in PAUSED_RULES else f"<p class='meta'>{len(fl)} record{'s' if len(fl) != 1 else ''} flagged</p>")
-                     + "<dl class='rule'>"
-                     f"<dt>What the test checks</dt><dd>{e(r['checks'])}</dd>"
-                     f"<dt>Why auditors look at it</dt><dd>{e(r['why'])}</dd>"
-                     f"<dt>Ordinary reasons it can happen</dt><dd>{e(r['innocent'])}</dd>"
-                     f"<dt>Threshold</dt><dd>{e(r['threshold'])}</dd>"
-                     f"<dt>Records used</dt><dd>{e(r['records'])}</dd></dl>")
-            if r["id"] in PAUSED_RULES:
-                b.append(f"<p class='note'><b>Paused.</b> {e(PAUSED_RULES[r['id']])}</p>")
-                continue
-            if not fl:
-                b.append("<p>No records met this test in the data collected so far.</p>")
-                continue
-            head, rest = fl[:20], fl[20:]
-            b.append("".join(self.flag_card(f) for f in head))
-            if rest:
-                b.append(f"<details><summary>Show the other {len(rest)}</summary>" + "".join(self.flag_card(f) for f in rest) + "</details>")
-
-        c = rf["concentration"]
-        b.append("<h2 id='concentration'>Where the payment dollars concentrate</h2>")
-        if c["n_payees"]:
-            b.append(f"<p class='small muted'>This is a ranking, not a flag. It shows how much of the city's spending with outside payees went to each one. "
-                     f"Of {money(c['total'])} listed in the monthly bills, {money(c['skipped_total'])} was left out because it mostly passes through "
-                     "(taxes sent to other governments, payroll, benefits, debt payments, the purchasing-card bill). "
-                     f"That leaves {money(c['kept_total'])} paid to {c['n_payees']:,} payees"
-                     + ("; the top payee received half of it" if c["half_n"] == 1 else
-                        f"; the top {c['half_n']} of them received half of it" if c["half_n"] else "")
-                     + ". Spelling variants of one company (such as “Inc” and “Co”) are added together. Concentration is normal for utilities, "
-                       "insurers and large contractors. It matters when it is unexpected or when no competition is on record.</p>"
-                     "<div class='scroll'><table><tr><th>Payee</th><th class=n>Paid</th><th class=n>Share</th><th class=n>Months paid</th><th class=n>Departments</th></tr>"
-                     + "".join(f"<tr><td>{e(t['name'])}</td><td class=n>{money(t['total'])}</td><td class=n>{100 * t['share']:.1f}%</td>"
-                               f"<td class=n>{t['months']}</td><td class=n>{t['depts']}</td></tr>" for t in c["table"]) + "</table></div>")
-            if c["excluded"]:
-                b.append("<details><summary>The largest payments left out of this ranking, and why</summary><div class='scroll'><table>"
-                         "<tr><th>Payee</th><th>Reason</th><th class=n>Paid</th></tr>" + "".join(
-                             f"<tr><td>{e(v)}</td><td>{e(reason)}</td><td class=n>{money(a)}</td></tr>" for v, reason, a in c["excluded"])
-                         + "</table></div><p class='small muted'>This sorting uses name and account keywords. If something here was left out by mistake, "
-                           "please report it.</p></details>")
-        else:
-            b.append("<p>No payment data yet.</p>")
-
-        rc = rf["records_check"]
-        b.append("<h2 id='records-check'>Records check: possible reading problems</h2>"
-                 "<p class='small muted'>These are not audit flags. They are places where the site's computer reading of the city's PDF documents "
-                 "may be wrong, listed so that nothing is hidden.</p>")
-        if rc["zero_contract"]:
-            b.append("<ul class='plain'>" + "".join(
-                f"<li>{e(j['contractor'])}, {e(j['name'] or 'job ' + j['job'])}: the sheet shows a contract amount of $0 but {money(j['paid'])} paid. "
-                + " · ".join(f"<a href='{e(u)}'>{e(l)}</a>" for l, u in j["links"][:3]) + "</li>" for j in rc["zero_contract"]) + "</ul>")
-        if rc["bad_checks"]:
-            b.append("<ul class='plain'>" + "".join(
-                f"<li>A {e(x['kind'])} document where the lines read here add up to {money(x['parsed_total'])} but the printed total is "
-                f"{money(x['stated_total'])}. <a href='{e(x['source_url'])}'>Source (PDF)</a></li>" for x in rc["bad_checks"]) + "</ul>")
-        if not rc["zero_contract"] and not rc["bad_checks"]:
-            b.append("<p>Nothing to report.</p>")
-
-        b.append("<h2 id='respond'>Respond, correct or report</h2>"
-                 f"<p>If you are named here, or you work for the city, and you want to explain a flag, email <a href=\"mailto:{CORRECTIONS_EMAIL}\">{CORRECTIONS_EMAIL}</a> "
-                 "with the Flag ID. The reply is posted word for word next to the flag, and the flag stays so readers can see both. "
-                 "If a flag rests on a reading mistake, it is removed and the fix is noted on the About page.</p>"
-                 "<p>This site is not an investigator and cannot say what happened. If you think a rule was broken, take it to the people who can look into it: "
-                 "the city attorney, the city's ethics board if one applies, or the district attorney. Public records requests can ask the city for bid "
-                 "results, contracts and conflict disclosures that are not on Legistar.</p>")
-        self.page("flags.html", "Review flags", "".join(b), "flags.html")
 
     def compare_page(self):
         members = [p for p in self.people if p["role"] != "Mayor"]
@@ -802,16 +652,10 @@ It covers {e(self.year)} meetings of the {e(' and '.join(json.loads(self.meta['b
 <li>An item counts as approved on the date of its first council action recorded as adopted, approved, confirmed or granted.</li>
 <li>Money categories (contracts, borrowing, TIF districts, grants, budget) are assigned by keywords in the title. Items that amend an earlier resolution are left out of totals so the same dollars are not counted twice.</li>
 <li>A motion to deny or not adopt that passes is shown as that motion passing, with the item named, so a yes or no is never shown without the question that was asked.</li>
-<li>Review flags use only the data described above. They cannot see invoices, bid results, contracts, campaign contributions, business ownership or conflict disclosures, so a flag can point to a place to look but cannot show intent.</li>
 </ul>
 <h2>Fairness rules</h2>
 <p>This site shows counts and dollars. It does not rank officials, label them or grade them. Every member gets the same statistics in the same layout,
 sample sizes are shown, and small samples are flagged.</p>
-<p><a href="flags.html">Review flags</a> are attached to records, such as a contract, a payment line or an agenda item, and not to people's character.
-Each flag comes from a test that is written out on that page before any results, with the ordinary reasons it can happen. The tests run the same way on every record,
-every night, and tests that find nothing are still listed. A member's page lists flagged items the public record names them on as sponsor, mover or seconder,
-or as an abstaining member, always next to how many items were checked, because sponsoring or moving an item is often routine. The thresholds were chosen by this site and are not city rules.
-A flag is not a finding. Anyone named can send a response, and it is posted word for word beside the flag.</p>
 <h2>Report an error</h2>
 <p>If something here does not match the city's record, email <a href="mailto:{CORRECTIONS_EMAIL}">{CORRECTIONS_EMAIL}</a> with the page address and the
 Legistar link. The city's record is the authority; this site corrects itself to match it.</p>"""
