@@ -40,6 +40,30 @@ Steps on their own:
 - **Nightly job** (`.github/workflows/nightly.yml`). Rebuilds and publishes to GitHub
   Pages once the project is pushed to a GitHub repository.
 
+## Review flags
+
+`site_builder/review_flags.py` runs seven published record checks on every build and the site
+shows them on `flags.html`: contracts paid past their amount plus contingency, identical payment
+lines, large purchasing-card charges, sole-source or waived-bid wording, large items approved with
+no recorded vote, large items with thin paperwork, and abstentions. It also writes a payee
+concentration table and a "records check" list of places where the PDF reading may be wrong.
+
+- A flag attaches to a record, not to a person's character. Item pages show a "Flagged for review"
+  box. Member pages list flagged items where the record names that person as sponsor, mover,
+  seconder or abstaining member, with the number of items checked as the denominator.
+- Thresholds live in `CONFIG` at the top of `review_flags.py`. They were chosen by this project,
+  are not city rules, and are printed on the page. Change one there and the page updates.
+- Rules with no results are still listed. Each rule prints what it checks, why auditors look at it,
+  and the ordinary reasons it can happen.
+- **Right of reply.** Add `flag_responses.json` at the repo root to post a reply word for word next
+  to a flag: `{"<Flag ID>": {"from": "Name or office", "date": "2026-11-20", "text": "..."}}`. The Flag ID is
+  printed at the bottom of each flag card.
+- Tests: `tests/test_flags.py` uses a made-up database (`tests/fixture.py`) with a case that must be
+  flagged and a near-miss that must not be for each rule. If it runs against the real database it
+  also checks that every flag has facts and a source link and that Flag IDs are unique.
+- The payee concentration table leaves out pass-through money by keyword (`PASS_VENDOR`,
+  `PASS_DEPT`). The page lists the largest payments it left out so a wrong exclusion is visible.
+
 ## Not built yet
 
 1. The annual budget book. Staff-report fiscal impact text is shown but its figures
