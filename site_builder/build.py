@@ -71,6 +71,23 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 .note{background:var(--soft);border-radius:8px;padding:10px 14px;font-size:.93rem}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;padding:16px 0 30px}
 summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain,ol.plain{padding-left:1.1em}ol.plain li{margin:.3em 0}ul.plain li{margin:.3em 0}
+.menu{display:none}
+/* Phones and small tablets: tap-to-open menu, larger touch targets, stacked summaries */
+@media (max-width:760px){
+body{font-size:16px}h1{font-size:1.4rem}h2{font-size:1.15rem}main{padding-top:14px}.wrap{padding:0 14px}
+header.site .wrap{align-items:center;justify-content:space-between;padding-top:10px;padding-bottom:10px}
+.menu{display:inline-block;padding:8px 14px;font-weight:600}
+.js header.site nav{display:none;width:100%}.js header.site.open nav{display:flex;flex-direction:column;gap:0}
+header.site nav a{padding:12px 2px;border-top:1px solid var(--line);font-size:1.05rem}
+.card{padding:12px}.grid{grid-template-columns:1fr 1fr}.stat b{font-size:1.2rem}
+table.dec tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}table.dec th,table.dec td{display:block;width:auto!important;border:0;padding:1px 0}
+th,td{padding:6px 6px}.controls{flex-direction:column;align-items:stretch}.controls input,.controls select{width:100%}
+.bar{flex-wrap:wrap;gap:2px 8px}.bar .lbl{width:auto}.bar .track{order:3;flex-basis:100%}.bar .val{width:auto;margin-left:auto}
+.cmp td:first-child,.cmp th:first-child{min-width:170px;position:sticky;left:0;background:var(--bg)}
+.scroll{-webkit-overflow-scrolling:touch}.scroll::after{content:"";display:block}
+a,summary,button,select{touch-action:manipulation}ul.plain li{margin:.5em 0}
+}
+@media (max-width:420px){.grid{grid-template-columns:1fr}}
 .cmp td,.cmp th{padding:4px 6px;font-size:.85rem;text-align:center}.cmp td:first-child,.cmp th:first-child{text-align:left;min-width:260px}
 """
 
@@ -132,7 +149,9 @@ class Site:
         doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(title)} | La Crosse Council Tracker</title><link rel="stylesheet" href="{root}style.css"></head><body>
-<header class="site"><div class="wrap"><a class="brand" href="{root}index.html">La Crosse Council Tracker <span class="tag">{e(self.year)}</span></a><nav>{nav}{years}</nav></div></header>
+<header class="site"><div class="wrap"><a class="brand" href="{root}index.html">La Crosse Council Tracker <span class="tag">{e(self.year)}</span></a><button class="menu" type="button" aria-expanded="false" aria-controls="nav">Menu</button><nav id="nav">{nav}{years}</nav></div></header>
+<script>document.documentElement.classList.add('js');(function(){{var h=document.querySelector('header.site'),b=h.querySelector('.menu');
+b.addEventListener('click',function(){{var o=h.classList.toggle('open');b.setAttribute('aria-expanded',o);b.textContent=o?'Close menu':'Menu'}})}})();</script>
 <main><div class="wrap">{body}</div></main>
 <footer><div class="wrap">Data from the City of La Crosse's public <a href="{e(self.meta['source'])}">Legistar records</a>.
 Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts and dollars only; this site does not grade officials.
@@ -421,7 +440,7 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
             unknown.append("Whether the result is final. The minutes for the latest meeting are still in draft.")
         rows = [("Where it stands", status), ("Who has acted", who), ("What it costs", cost or "Not stated in the records this site reads."),
                 ("What happens next", nxt)]
-        return ("<div class='card'><table>" + "".join(f"<tr><th style='width:11em'>{e(k)}</th><td>{e(v)}</td></tr>" for k, v in rows)
+        return ("<div class='card'><table class='dec'>" + "".join(f"<tr><th style='width:11em'>{e(k)}</th><td>{e(v)}</td></tr>" for k, v in rows)
                 + "<tr><th>Not yet known</th><td>" + ("<ul class='plain' style='margin:0'>" + "".join(f"<li>{e(u)}</li>" for u in unknown) + "</ul>"
                                                        if unknown else "Nothing flagged as missing.") + "</td></tr>"
                 + f"<tr><th>Last checked</th><td>{e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}, against the city's Legistar records</td></tr></table></div>")
