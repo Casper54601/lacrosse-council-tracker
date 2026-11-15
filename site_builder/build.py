@@ -391,10 +391,11 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
             status = "Not decided yet."
         elif done:
             last = done[-1]
-            status = f"Latest step: {self.outcome(last)} ({last['body']}, {nice_date(last['date'])}). The city lists its status as “{it['status']}”."
+            when = ", ".join(x for x in (last["body"], nice_date(last["date"]) if last["date"] else None) if x)
+            status = f"Latest step: {self.outcome(last)}{' (' + when + ')' if when else ''}. The city lists its status as “{it['status']}”."
         else:
             status = f"No action is recorded. The city lists its status as “{it['status']}”."
-        bodies = list(dict.fromkeys(a["body"] for a in done))
+        bodies = list(dict.fromkeys(a["body"] for a in done if a["body"]))
         who = ", then ".join(bodies) if bodies else "No body has acted on it in the records."
         if it["fiscal_impact"]:
             cost = f"In city staff's words: {it['fiscal_impact']}"
@@ -403,7 +404,7 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
         else:
             cost = None
         if future:
-            nxt = "; ".join(f"On the agenda for the {a['body']} on {nice_date(a['date'])}" for a in future) + ". Agendas can change."
+            nxt = "; ".join(f"On the agenda for the {a['body'] or 'city'} on {nice_date(a['date'])}" for a in future) + ". Agendas can change."
         elif appr:
             nxt = "No further meeting is scheduled in the records. This site does not track how a decision is carried out afterward."
         else:
