@@ -113,9 +113,16 @@ def parse_warrants(text):
     start = text.find("WARRANT PUBLICATION LIST")
     if start < 0:
         return [], None
-    rows, dept, total = [], None, None
+    rows, dept, total, in_pcard = [], None, None, False
     for line in text[start:].replace("\x0c", "\n").split("\n"):
         s = line.strip()
+        # Some months print the purchasing-card detail in the middle of the warrant list.
+        if s.startswith("PCARD DETAIL"):
+            in_pcard = True
+        elif s.startswith("WARRANT PUBLICATION LIST") or s == "CITY OF LA CROSSE":
+            in_pcard = False
+        if in_pcard:
+            continue
         if not s or SKIP.match(s) or s.startswith("VENDOR NAME"):
             continue
         m = re.match(r"^TOTAL\s+(" + AMT + r")$", s)
@@ -143,8 +150,8 @@ def parse_pcard(text):
             rows.append((m.group(1), m.group(2), num(m.group(3))))
             continue
         m = re.match(r"^\s*TOTAL\s+(" + AMT + r")\s*$", line)
-        if m:
-            total = num(m.group(1))
+        if m and rows and total is None:
+            total = num(m.group(1))       # the first TOTAL after the card lines is the card total
     return rows, total
 
 

@@ -11,6 +11,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.environ.get("COUNCIL_DB") or os.path.join(ROOT, "data", "council.sqlite")
 OUT = os.environ.get("SITE_OUT") or os.path.join(ROOT, "site")
 COUNCIL = 138
+ISSUES_FILE = os.path.join(ROOT, "issues.json")      # the published rules for "follow an issue" pages
+PREV_DB = os.environ.get("PREV_DB")                  # last year's database, for year-over-year payee totals
 CORRECTIONS_LOG = os.path.join(ROOT, "corrections.json")   # [{"date": "2026-11-20", "text": "what changed and why"}]
 CORRECTIONS_EMAIL = "spencer.adam1@gmail.com"
 APPROVING = ("ADOPTED", "ADOPTED AS AMENDED", "APPROVED", "CONFIRMED", "GRANTED")
@@ -71,7 +73,7 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 .note{background:var(--soft);border-radius:8px;padding:10px 14px;font-size:.93rem}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;padding:16px 0 30px}
 summary{cursor:pointer}button{font:inherit;padding:7px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);cursor:pointer}ul.plain,ol.plain{padding-left:1.1em}ol.plain li{margin:.3em 0}ul.plain li{margin:.3em 0}
-.menu{display:none}
+.menu{display:none}code{font-size:.85em;background:var(--soft);padding:1px 5px;border-radius:4px;word-break:break-word}
 /* Phones and small tablets: tap-to-open menu, larger touch targets, stacked summaries */
 @media (max-width:760px){
 body{font-size:16px}h1{font-size:1.4rem}h2{font-size:1.15rem}main{padding-top:14px}.wrap{padding:0 14px}
@@ -91,7 +93,7 @@ a,summary,button,select{touch-action:manipulation}ul.plain li{margin:.5em 0}
 .cmp td,.cmp th{padding:4px 6px;font-size:.85rem;text-align:center}.cmp td:first-child,.cmp th:first-child{text-align:left;min-width:260px}
 """
 
-NAV = [("index.html", "Home"), ("upcoming.html", "This week"), ("meetings.html", "Meetings"), ("money.html", "Money"),
+NAV = [("index.html", "Home"), ("upcoming.html", "This week"), ("meetings.html", "Meetings"), ("issues.html", "Issues"), ("money.html", "Money"),
        ("budget.html", "Budget"), ("payments.html", "Who gets paid"), ("members.html", "Council & Mayor"),
        ("compare.html", "Compare votes"), ("guide.html", "How city hall works"), ("about.html", "About")]
 # Links to other years' copies of the site, e.g. SITE_YEAR_LINKS="2025=2025/index.html"
@@ -216,7 +218,7 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
             f.write(CSS)
         self.home(); self.meetings_pages(); self.item_pages(); self.money_page()
         self.payments_page(); self.upcoming_page(); self.budget_page(); self.guide_page()
-        self.member_pages(); self.compare_page(); self.about_page(); self.export_data()
+        self.member_pages(); self.compare_page(); self.about_page(); self.export_data(); self.issue_pages(); self.search_index()
 
     def council_meetings(self):
         return sorted((m for m in self.meetings.values() if m["body_id"] == COUNCIL), key=lambda m: m["date"])
@@ -257,6 +259,13 @@ Last updated {e(self.updated.replace('T', ' ').replace('Z', ' UTC'))}. Counts an
             b.append(f"<p class='note'>This is the {e(self.year)} archive. Use the menu to browse that year's meetings, votes, money and payments.</p>"
                      f"<h2>All {e(self.year)} Common Council meetings</h2>" + self.meeting_table(cm))
             return self.page("index.html", "Home", "".join(b), "index.html")
+        b.append("<div class='controls'><input id='sq' type='search' placeholder='Search everything: items, payees, council members' aria-label='Search the site' style='flex:1;min-width:240px'></div>"
+                 "<div id='sr'></div><script src='search.js'></script><script>(function(){var q=document.getElementById('sq'),r=document.getElementById('sr');"
+                 "var esc=function(s){return String(s).replace(/[&<>\"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]})};"
+                 "q.addEventListener('input',function(){var t=q.value.trim().toLowerCase();if(t.length<2){r.innerHTML='';return}"
+                 "var w=t.split(/\\s+/),hits=IDX.filter(function(x){var k=x[3];return w.every(function(z){return k.indexOf(z)>=0})});"
+                 "r.innerHTML='<p class=\"meta\">'+hits.length+' result'+(hits.length==1?'':'s')+(hits.length>40?', showing the first 40':'')+'</p><ul class=\"plain\">'+"
+                 "hits.slice(0,40).map(function(x){return '<li><span class=\"tag\">'+x[0]+'</span><a href=\"'+esc(x[2])+'\">'+esc(x[1])+'</a></li>'}).join('')+'</ul>'})})();</script>")
         b.append("<div class='grid'><a class='stat' href='upcoming.html' style='text-decoration:none;color:inherit'><b>This week</b><span>What the council is about to decide, and how to weigh in</span></a>"
                  "<a class='stat' href='members.html#find' style='text-decoration:none;color:inherit'><b>Find my council member</b><span>Pick your district to see who represents you</span></a>"
                  "<a class='stat' href='guide.html' style='text-decoration:none;color:inherit'><b>How city hall works</b><span>Who decides what, and what the terms mean</span></a></div>")
@@ -535,7 +544,16 @@ list.hidden=true;res.hidden=false;count.textContent=n+' action'+(n==1?'':'s')+' 
         total = sum(v["t"] for v in vend.values())
         big = {k: v for k, v in vend.items() if v["t"] >= SMALL}
         small = {k: v for k, v in vend.items() if v["t"] < SMALL}
-        V = [dict(v=k, t=round(v["t"], 2), n=v["n"], m={mi: round(x, 2) for mi, x in sorted(v["m"].items())},
+        prev, prev_year, mnums = {}, None, sorted({m[5:] for m in months})
+        if PREV_DB and os.path.exists(PREV_DB):
+            pdb = sqlite3.connect(PREV_DB)
+            prev_year = pdb.execute("SELECT value FROM meta WHERE key='year'").fetchone()[0]
+            okm = "SELECT item_id FROM packet_checks WHERE kind='payments' AND ok=0"
+            for vn, mo, amt in pdb.execute(f"SELECT vendor, substr(bills_month,6,2), amount FROM payments WHERE item_id NOT IN ({okm})"):
+                if mo in mnums:                       # compare the same months only
+                    prev[vn] = prev.get(vn, 0.0) + amt
+            pdb.close()
+        V = [dict(v=k, p=(round(prev.get(k, 0.0), 2) if prev_year else None), t=round(v["t"], 2), n=v["n"], m={mi: round(x, 2) for mi, x in sorted(v["m"].items())},
                   d=sorted(([dn, round(x, 2)] for dn, x in v["d"].items()), key=lambda z: -z[1])[:6])
              for k, v in sorted(big.items(), key=lambda kv: -kv[1]["t"])]
         pc = collections.defaultdict(lambda: [0.0, 0])
@@ -594,12 +612,19 @@ const usd=x=>(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{minimumFract
 let lim=50;
 function draw(){const t=$('vq').value.trim().toLowerCase();const rows=V.filter(v=>!t||v.v.toLowerCase().includes(t));
 $('vn').textContent=rows.length.toLocaleString()+' payee'+(rows.length==1?'':'s');
-let h='<tr><th>Payee</th><th class=n>Total paid</th><th class=n>Payment lines</th></tr>';
+const PY=V.length&&V[0].p!==null;
+let h='<tr><th>Payee</th><th class=n>Total paid</th>'+(PY?'<th class=n>Same months, PREVYEAR</th><th class=n>Change</th>':'')+'<th class=n>Payment lines</th></tr>';
 rows.slice(0,lim).forEach(v=>{h+='<tr><td><details><summary>'+esc(v.v)+'</summary><p class="small"><b>By month approved:</b> '+
 Object.entries(v.m).map(([m,x])=>'<a href="'+esc(SRC[m])+'">'+MN[+m.slice(5)-1]+'</a> '+usd(x)).join(' · ')+'</p><p class="small"><b>Charged to:</b> '+
-v.d.map(d=>esc(d[0])+' '+usd(d[1])).join(' · ')+'</p></details></td><td class=n>'+usd(v.t)+'</td><td class=n>'+v.n+'</td></tr>'});
+v.d.map(d=>esc(d[0])+' '+usd(d[1])).join(' · ')+'</p></details></td><td class=n>'+usd(v.t)+'</td>'+(PY?'<td class=n>'+(v.p?usd(v.p):'<span class="muted">none listed</span>')+'</td><td class=n>'+(v.p?(v.t-v.p>=0?'+':'')+usd(v.t-v.p):'')+'</td>':'')+'<td class=n>'+v.n+'</td></tr>'});
 $('vt').innerHTML=h;$('more').hidden=rows.length<=lim}
+if(location.hash.indexOf('#q=')==0)$('vq').value=decodeURIComponent(location.hash.slice(3));
 $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener('click',()=>{lim+=200;draw()});draw();</script>""")
+        script = script.replace("PREVYEAR", str(prev_year or ""))
+        if prev_year:
+            b.insert(4, f"<p class='small muted'>The payee table compares each payee with the same months of {e(prev_year)} "
+                        f"({len(mnums)} monthly lists in each year). Payees are matched by the exact name printed in the city's lists, so a payee whose name "
+                        "was printed differently last year shows as “none listed”.</p>")
         self.page("payments.html", "Who gets paid", "".join(b), "payments.html", script)
 
     def upcoming_page(self):
@@ -717,6 +742,66 @@ $('vq').addEventListener('input',()=>{lim=50;draw()});$('more').addEventListener
              "<h2>What the words mean</h2><dl>" + "".join(f"<dt><b>{e(t)}</b></dt><dd style='margin:0 0 .7em'>{e(d)}</dd>" for t, d in terms) + "</dl>",
              "<p class='small muted'>These are general explanations written for this site, not legal definitions. The city's code and the City Clerk are the authority on procedure.</p>"]
         self.page("guide.html", "How city hall works", "".join(b), "guide.html")
+
+    def issues(self):
+        if not os.path.exists(ISSUES_FILE):
+            return []
+        with open(ISSUES_FILE, encoding="utf-8") as f:
+            defs = json.load(f)
+        out = []
+        for d in defs:
+            pat = re.compile(d["match"], re.I)
+            its = [i for i in self.items.values() if pat.search((i["name"] or "") + " " + (i["title"] or ""))]
+            if its:
+                out.append((d, sorted(its, key=lambda i: i["file_number"])))
+        return out
+
+    def issue_pages(self):
+        issues = self.issues()
+        b = [f"<h1>Follow an issue</h1><p class='lede'>Topics that run across several items and meetings in {e(self.year)}, gathered in one place.</p>"
+             "<p class='note'>Each issue is a simple word search over item names and official titles, and the search words are printed on the issue's page. "
+             "An item can appear under more than one issue. Being listed says only that the item's title matches the words.</p><div class='grid'>"]
+        for d, its in issues:
+            b.append(f"<a class='stat' href='issue/{e(d['slug'])}.html' style='text-decoration:none;color:inherit'><b>{e(d['title'])}</b>"
+                     f"<span>{len(its)} items · {e(d['about'])}</span></a>")
+        b.append("</div>" + ("" if issues else "<p>No items match the issue list for this year.</p>"))
+        self.page("issues.html", "Issues", "".join(b), "issues.html")
+        for d, its in issues:
+            ids = {i["id"] for i in its}
+            acts = [a for a in self.actions if a["item_id"] in ids and a["date"]]
+            decided = sum(1 for i in its if i["id"] in self.approved)
+            c = [f"<p class='small'><a href='../issues.html'>← All issues</a></p><h1>{e(d['title'])}</h1><p class='lede'>{e(d['about'])}</p>"
+                 f"<p class='meta'>{len(its)} items in {e(self.year)}, {decided} approved by the Common Council, {len(acts)} recorded steps. "
+                 f"Included: items whose name or official title matches <code>{e(d['match'])}</code>.</p><h2>Timeline</h2>"]
+            last = None
+            for a in acts:
+                it = self.items[a["item_id"]]
+                if a["date"] != last:
+                    c.append(f"{'</ul>' if last else ''}<h3>{nice_date(a['date'])}</h3><ul class='plain'>")
+                    last = a["date"]
+                c.append(f"<li><b>{e(a['body'] or 'City')}</b>, <a href='../{self.item_href(it)}'>{e(it['name'] or it['file_number'])}</a>: {e(self.outcome(a))} "
+                         f"<a class='small' href='{e(a['source_url'])}'>Source</a></li>")
+            c.append(("</ul>" if last else "<p>No dated steps are recorded.</p>") + "<h2>Items</h2><div class='scroll'><table><tr><th>File</th><th>Item</th><th>Where it stands</th></tr>"
+                     + "".join(f"<tr><td>{e(i['file_number'])}</td><td><a href='../{self.item_href(i)}'>{e(i['name'] or i['file_number'])}</a><br>"
+                               f"<span class='small muted'>{e(i['title'][:200])}</span></td><td class='small'>"
+                               + (f"Approved by the council on {nice_date(self.approved[i['id']]['date'])}" if i["id"] in self.approved else f"City status: {e(i['status'])}")
+                               + "</td></tr>" for i in its) + "</table></div>")
+            self.page(f"issue/{d['slug']}.html", d["title"], "".join(c), "issues.html")
+
+    def search_index(self):
+        """search.js: one list the home page searches. [kind, label, link, lowercase text]"""
+        idx = [["Item", f"{i['name'] or i['file_number']} ({i['file_number']})", self.item_href(i),
+                f"{i['file_number']} {i['name'] or ''} {i['title'] or ''}".lower()] for i in self.items.values()]
+        idx += [["Person", f"{p['name']}, {'Mayor' if p['role'] == 'Mayor' else 'District ' + str(p['district'])}", f"member/{p['id']}.html",
+                 f"{p['name']} district {p['district'] or ''} {p['role']}".lower()] for p in self.people]
+        bad = "SELECT item_id FROM packet_checks WHERE kind='payments' AND ok=0"
+        idx += [["Payee", f"{r['vendor']}: {money(r['t'])} paid", "payments.html#q=" + r["vendor"].replace("%", "%25").replace(" ", "%20").replace("&", "%26").replace("#", "%23"),
+                 r["vendor"].lower()] for r in self.q(f"SELECT vendor, SUM(amount) t FROM payments WHERE item_id NOT IN ({bad}) GROUP BY vendor HAVING SUM(amount) >= 1000 ORDER BY 2 DESC")]
+        idx += [["Issue", d["title"], f"issue/{d['slug']}.html", (d["title"] + " " + d["about"]).lower()] for d, _ in self.issues()]
+        idx += [["Meeting", f"{m['body']}, {nice_date(m['date'])}", f"meeting/{m['id']}.html", f"{m['body']} {m['date']} {nice_date(m['date'])} {m['comment'] or ''}".lower()]
+                for m in sorted(self.meetings.values(), key=lambda m: m["date"], reverse=True)]
+        with open(os.path.join(OUT, "search.js"), "w", encoding="utf-8") as f:
+            f.write("const IDX=" + json.dumps(idx).replace("</", "<\\/") + ";")
 
     def member_stats(self, p):
         pid = p["id"]

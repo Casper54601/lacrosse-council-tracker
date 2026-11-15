@@ -169,3 +169,27 @@ Total Operating Expenses     $    4,304,037   $    5,163,625       $      865,21
     def test_wrong_total_is_caught(self):
         bad = self.PAGE.replace("885,117   $        (1,320)", "999,999   $        (1,320)")
         self.assertFalse(budget.parse_page(bad, "Total Operating Expenses")[3])
+
+
+class InterleavedCardSection(unittest.TestCase):
+    TEXT = """WARRANT PUBLICATION LIST
+PARKS
+  ACME SUPPLY                               1,000.00
+PCARD DETAIL - APRIL 2025
+ORG          VENDOR #   VENDOR NAME                  AMOUNT
+       100       20,768 MENARDS LA CROSSE WI                    28.88
+                        TOTAL                            $28.88
+CITY OF LA CROSSE
+WARRANT PUBLICATION LIST
+  BETA CO                                   2,000.00
+                                            3,000.00
+                               TOTAL             3,000.00
+"""
+
+    def test_card_section_in_the_middle_of_the_warrant_list(self):
+        rows, total = packets.parse_warrants(self.TEXT)
+        self.assertEqual(total, 3000.0)
+        self.assertEqual([r[1] for r in rows], ["ACME SUPPLY", "BETA CO"])
+        self.assertEqual(rows[1][0], "PARKS")           # the department carries across the card section
+        crows, ctotal = packets.parse_pcard(self.TEXT)
+        self.assertEqual((len(crows), ctotal), (1, 28.88))

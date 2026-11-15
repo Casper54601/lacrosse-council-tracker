@@ -47,6 +47,12 @@ Steps on their own:
 - **Nightly job** (`.github/workflows/nightly.yml`). Rebuilds and publishes to GitHub
   Pages once the project is pushed to a GitHub repository.
 
+## Issues
+
+`issues.json` lists the "follow an issue" pages. Each entry has a title, a one-line
+description and a `match` pattern searched in item names and official titles. Add an
+entry to add an issue; the pattern is printed on the issue's page.
+
 ## Corrections log
 
 To record a correction, add an entry to `corrections.json` at the repo root:
