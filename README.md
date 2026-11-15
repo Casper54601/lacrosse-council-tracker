@@ -47,6 +47,11 @@ Steps on their own:
 - **Nightly job** (`.github/workflows/nightly.yml`). Rebuilds and publishes to GitHub
   Pages once the project is pushed to a GitHub repository.
 
+## Corrections log
+
+To record a correction, add an entry to `corrections.json` at the repo root:
+`[{"date": "2026-11-20", "text": "What changed and why."}]`. It appears on the About page.
+
 ## Not built yet
 
 1. Budget detail below the department level, and the capital budget. Staff-report
