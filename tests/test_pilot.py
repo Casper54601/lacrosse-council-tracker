@@ -62,10 +62,13 @@ class PilotFacts(unittest.TestCase):
         self.assertEqual(n, (2, 2))
         self.assertEqual(self.one("SELECT COUNT(*) FROM votes GROUP BY action_id, person_id HAVING COUNT(*)>1"), None)
 
-    def test_budget_scheduled_nov_16(self):
+    def test_budget_has_a_council_action_on_or_after_nov_16(self):
+        # The city can move the budget meeting by a day (it went from 11/16 to 11/17), so this checks
+        # that the item is found with a Common Council action in mid-November or later, not one exact date.
         r = self.one("""SELECT a.date FROM actions a JOIN items i ON i.id=a.item_id
             WHERE i.file_number='26-0588' AND a.body_id=138 ORDER BY a.date DESC""")
-        self.assertEqual(r[0], "2026-11-16")
+        self.assertIsNotNone(r, "budget item 26-0588 has no Common Council action")
+        self.assertGreaterEqual(r[0], "2026-11-16")
 
     def test_excused_is_not_a_vote(self):
         # Pitfall 6: tallies must add up, with Excused kept out of yes and no.
