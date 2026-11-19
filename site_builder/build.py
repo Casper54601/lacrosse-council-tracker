@@ -18,7 +18,7 @@ COUNCIL = 138
 ISSUES_FILE = os.path.join(ROOT, "issues.json")      # the published rules for "follow an issue" pages
 PREV_DB = os.environ.get("PREV_DB")                  # last year's database, for year-over-year payee totals
 CORRECTIONS_LOG = os.path.join(ROOT, "corrections.json")   # [{"date": "2026-11-20", "text": "what changed and why"}]
-CORRECTIONS_EMAIL = "spencer.adam1@gmail.com"
+CORRECTIONS_EMAIL = "lsetracker@yahoo.com"
 APPROVING = ("ADOPTED", "ADOPTED AS AMENDED", "APPROVED", "CONFIRMED", "GRANTED")
 NO_ROLL = "Voice or consent vote, no individual votes recorded"
 
